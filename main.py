@@ -134,6 +134,8 @@ if __name__ == '__main__':
         item_num = 43136    # number of items in DIGINETICA
     elif args.dataset == 'YOOCHOOSE':
         item_num = 25958    # number of items in YOOCHOOSE
+    elif args.dataset == 'MOVIELENS100K':
+        item_num = 1301
     else:
         raise ValueError('Invalid dataset name')
 
