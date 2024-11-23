@@ -1,5 +1,5 @@
 import pandas as pd
-df = pd.read_csv('ml-100k/u.item', sep='\t', names=['user_id', 'item_id', 'rating', 'timestamp'])
+df = pd.read_csv('ml-100k/u.data', sep='\t', names=['user_id', 'item_id', 'rating', 'timestamp'])
 
 # Group by user_id and count the number of ratings
 user_ratings_count = df.groupby('user_id')['rating'].count()
@@ -112,7 +112,7 @@ for key, value in monthly_interactions.items():
 import os
 
 # Create the directory if it doesn't exist
-directory = "ADER/data/MOVIELENS100K/"
+directory = "./MOVIELENS100K/"
 if not os.path.exists(directory):
     os.makedirs(directory)
 
