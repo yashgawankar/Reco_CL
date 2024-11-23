@@ -1,271 +1,124 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-# @Project      : ADER
-# @File         : preprocessing.py
+import pandas as pd
+df = pd.read_csv('ml-100k/u.item', sep='\t', names=['user_id', 'item_id', 'rating', 'timestamp'])
 
-import argparse
+# Group by user_id and count the number of ratings
+user_ratings_count = df.groupby('user_id')['rating'].count()
+
+# Filter out users with only one rating
+filtered_users = user_ratings_count[user_ratings_count > 5].index
+
+# Filter the original DataFrame to include only the filtered users
+filtered_df = df[df['user_id'].isin(filtered_users)]
+
+# Group by item_id and count the number of ratings
+movie_ratings_count = filtered_df.groupby('item_id')['rating'].count()
+
+# Filter out movies with less than 5 ratings
+filtered_movies = movie_ratings_count[movie_ratings_count >= 5].index
+
+# Filter the DataFrame to include only the filtered movies
+filtered_df = filtered_df[filtered_df['item_id'].isin(filtered_movies)]
+
+# Find total number of items rated 4 or higher by user in filtered df and plot a histogram with customized bins (taking a list as input)
+
+# Find total number of items rated 4 or higher by user in filtered df
+high_rated_items_count = filtered_df[filtered_df['rating'] >= 4].groupby('user_id')['item_id'].count()
+
+# filter all interactions from filtered_df such that the ratings are 4 or higher.
+
+# Filter interactions with ratings of 4 or higher
+high_rated_interactions = filtered_df[filtered_df['rating'] >= 4]
+
+# Print the size of the filtered DataFrame
+print("Size of DataFrame with high ratings:", high_rated_interactions.size)
+
+# convert the timestamp to a readable format - dd/mm/yyyy
+
+from datetime import datetime
+
+# Assuming 'timestamp' column contains Unix timestamps
+high_rated_interactions['readable_timestamp'] = high_rated_interactions['timestamp'].apply(lambda x: datetime.fromtimestamp(x).strftime('%d/%m/%Y'))
+
+# Display the DataFrame with the new column
+print(high_rated_interactions.head())
+
+# Convert timestamp to datetime objects
+high_rated_interactions['datetime'] = pd.to_datetime(high_rated_interactions['timestamp'], unit='s')
+
+# Extract year and month
+high_rated_interactions['year_month'] = high_rated_interactions['datetime'].dt.to_period('M')
+
+# Group by user_id and year_month, count interactions
+user_monthly_interactions = high_rated_interactions.groupby(['user_id', 'year_month'])['item_id'].count()
+
+# Filter out user-month combinations with less than 5 interactions
+filtered_user_monthly_interactions = user_monthly_interactions[user_monthly_interactions >= 5]
+
+# Get the indices (user_id, year_month) of the filtered interactions
+filtered_indices = filtered_user_monthly_interactions.index
+
+# Filter the original high_rated_interactions DataFrame based on the filtered indices
+filtered_high_rated_interactions = high_rated_interactions.set_index(['user_id', 'year_month']).loc[filtered_indices].reset_index()
+
+# Now filtered_high_rated_interactions contains only interactions where each user has at least 5 interactions every month
+print("Size of DataFrame with high ratings and at least 5 interactions per user per month:", filtered_high_rated_interactions.size)
+filtered_high_rated_interactions.head()
+
+
+# Assign new Ids to the items to make them consecutive and maintain the map
+
+# Create a mapping from old item IDs to new consecutive IDs
+old_to_new_item_id = {}
+new_item_id = 1
+
+# Iterate through unique item IDs in the filtered DataFrame
+for item_id in filtered_high_rated_interactions['item_id'].unique():
+  if item_id not in old_to_new_item_id:
+    old_to_new_item_id[item_id] = new_item_id
+    new_item_id += 1
+
+# Create a new column with the new consecutive item IDs
+filtered_high_rated_interactions['new_item_id'] = filtered_high_rated_interactions['item_id'].map(old_to_new_item_id)
+
+# Now you have a DataFrame with both the old and new item IDs, and the mapping is stored in old_to_new_item_id
+print(filtered_high_rated_interactions.head())
+
+# Count total no of unique items in filtered_high_rated_interactions
+
+# Count the number of unique items in filtered_high_rated_interactions
+num_unique_items = filtered_high_rated_interactions['item_id'].nunique()
+
+print("Total number of unique items in filtered_high_rated_interactions:", num_unique_items)
+
+# Split each interaction from filtered_high_rated_interactions monthwise and store each of the interactions in a dictionary where the key is "period_0" for 1st month and so on in order, and the value is a list of tuple - (user_id, new_item_id)
+
+monthly_interactions = {}
+unique_months = sorted(filtered_high_rated_interactions['year_month'].unique())
+for i, month in enumerate(unique_months):
+  month_data = filtered_high_rated_interactions[filtered_high_rated_interactions['year_month'] == month]
+  interactions = [(row['user_id'], row['new_item_id']) for _, row in month_data.iterrows()]
+  monthly_interactions[f"period_{i}"] = interactions
+
+
+# print the key and size of the value for each k,v pair
+
+for key, value in monthly_interactions.items():
+  print(f"Key: {key}, Size of value: {len(value)}")
+
+
+# Save each of the values in the dict in a text file that corresponds to its key, labeled as <key>.txt. In each text file, store the corresponding values such that each ele of the tuple is separated by a space and each tuple is on a new line.
+# Store this in ADER/data/MOVIELENS100K/ directory here
+
 import os
-from util import *
 
+# Create the directory if it doesn't exist
+directory = "ADER/data/MOVIELENS100K/"
+if not os.path.exists(directory):
+    os.makedirs(directory)
 
-def str2bool(v):
-    """
-    Convert string to boolean
-    :param v: string
-    :return: boolean True or False
-    """
-    if isinstance(v, bool):
-        return v
-    if v.lower() in ('yes', 'true', 't', 'y', '1'):
-        return True
-    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
-        return False
-    else:
-        raise argparse.ArgumentTypeError('Boolean value expected.')
+for key, value in monthly_interactions.items():
+  file_path = os.path.join(directory, f"{key}.txt")
+  with open(file_path, "w") as f:
+    for user_id, item_id in value:
+      f.write(f"{user_id} {item_id}\n")
 
-
-def read_data(dataset_path):
-    """
-    Load data from raw dataset.
-    :param dataset_path: the full name of dataset including extension name
-    :return sess_map: map from raw data session name to session Id, a dictionary sess_map[sess_name]=sessId
-    :return item_map: map from raw data item name to item Id, a dictionary item_map[item_name]=itemId
-    :return reformed_data: a list: each element is a action, which is a list of [sessId, itemId, time]
-    """
-    # load data according to file extension name
-    filename_extension = dataset_path.split('/')[-1].split('.')[-1]
-    if filename_extension == 'dat':
-        sess_map, item_map, reformed_data = read_dat(dataset_path)
-    elif filename_extension == 'csv':
-        sess_map, item_map, reformed_data = read_csv(dataset_path)
-    else:
-        print("Error: new data file type !!!")
-
-    # print raw dataset information
-    print('Total number of sessions in dataset:', len(sess_map.keys()))
-    print('Total number of items in dataset:', len(item_map.keys()))
-    print('Total number of actions in dataset:', len(reformed_data))
-    print('Average number of actions per user:', len(reformed_data) / len(sess_map.keys()))
-    print('Average number of actions per item:', len(reformed_data) / len(item_map.keys()))
-
-    return sess_map, item_map, reformed_data
-
-
-def short_remove(reformed_data, args):
-    """
-    Remove data according to threshold
-    :param reformed_data: loaded data, a list: each element is a action, which is a list of [sessId, itemId, time]
-    :param args: args.threshold_item: minimum number of appearance time of item -1
-                 args.threshold_sess: minimum length of session -1
-                 args.yoochoose_select: select a most recent fraction of entire dataset
-    :return removed_data: result data after removing
-    :return sess_end: a map recording session end time, a dictionary sess_end[sessId]=end_time
-    """
-    org_sess_end = dict()
-    for [userId, _, time] in reformed_data:
-        org_sess_end = generate_sess_end_map(org_sess_end, userId, time)
-
-    # remove session whose length is 1
-    sess_counter = defaultdict(lambda: 0)
-    for [userId, _, _] in reformed_data:
-        sess_counter[userId] += 1
-    removed_data = list(filter(lambda x: sess_counter[x[0]] > 1, reformed_data))
-
-    # remove item which appear less or equal to threshold_item
-    item_counter = defaultdict(lambda: 0)
-    for [_, itemId, _] in removed_data:
-        item_counter[itemId] += 1
-    removed_data = list(filter(lambda x: item_counter[x[1]] > args.threshold_item, removed_data))
-
-    # remove session whose length less or equal to threshold_sess
-    sess_counter = defaultdict(lambda: 0)
-    for [userId, _, _] in removed_data:
-        sess_counter[userId] += 1
-    removed_data = list(filter(lambda x: sess_counter[x[0]] > args.threshold_sess, removed_data))
-
-    # record session end time
-    sess_end = dict()
-    for [userId, _, time] in removed_data:
-        sess_end = generate_sess_end_map(sess_end, userId, time)
-
-    # if yoochoose dataset, choose a most recent fraction of entire dataset
-    if args.yoochoose_select < 1.0 and args.dataset == 'yoochoose-clicks.dat':
-        max_time = max(map(lambda x: x[2], removed_data))
-        if args.test_fraction == 'day':
-            test_threshold = 86400
-        elif args.test_fraction == 'week':
-            test_threshold = 86400 * 7
-
-        train_session_times = []
-        for userId in sess_end.keys():
-            if sess_counter[userId] > 1 and sess_end[userId] <= max_time - test_threshold:
-                for _ in range(sess_counter[userId]-1):
-                    train_session_times.append(sess_end[userId])
-        threshold = np.percentile(train_session_times, (1.0 - args.yoochoose_select) * 100.0, interpolation='lower')
-        removed_data = list(filter(lambda x: sess_end[x[0]] >= threshold, removed_data))
-
-    # print information of removed data
-    print('Number of sessions after pre-processing:', len(set(map(lambda x: x[0], removed_data))))
-    print('Number of items after pre-processing:', len(set(map(lambda x: x[1], removed_data))))
-    print('Number of actions after pre-processing:', len(removed_data))
-    print('Average number of actions per session:', len(removed_data) / len(set(map(lambda x: x[0], removed_data))))
-    print('Average number of actions per item:', len(removed_data) / len(set(map(lambda x: x[1], removed_data))))
-
-    return removed_data, sess_end
-
-
-def time_partition(removed_data, session_end, args):
-    """
-    Partition data according to time periods
-    :param removed_data: input data, a list: each element is a action, which is a list of [sessId, itemId, time]
-    :param session_end: a dictionary recording session end time, session_end[sessId]=end_time
-    :param : args: args.test_fraction: time interval for each partition
-    :return: time_fraction: a dictionary, the keys are different time periods, value is a list of actions in that
-                            time period
-    """
-    if args.is_time_fraction:
-        # split entire dataset by time interval
-        time_fraction = dict()
-        all_times = np.array(list(session_end.values()))
-        max_time = max(all_times)
-        min_time = min(all_times)
-
-        if args.dataset == 'train-item-views.csv':
-            # for DIGINETICA, choose the most recent 16 fraction and put left dataset in initial set
-            if args.test_fraction == 'week':
-                period_threshold = np.arange(max_time, min_time, -7 * 86400)
-            elif args.test_fraction == 'day':
-                period_threshold = np.arange(max_time, min_time, -86400)
-            else:
-                raise ValueError('invalid time fraction')
-            period_threshold = np.sort(period_threshold)
-            period_threshold = period_threshold[-17:]
-
-        elif args.dataset == 'yoochoose-clicks.dat':
-            # for YOOCHOOSE, choose the earliest 17 fraction
-            if args.test_fraction == 'week':
-                period_threshold = np.arange(min_time, max_time, 7 * 86400)
-            elif args.test_fraction == 'day':
-                period_threshold = np.arange(min_time, max_time, 86400)
-            else:
-                raise ValueError('invalid time fraction')
-            period_threshold = np.sort(period_threshold)
-            period_threshold = period_threshold[1:]
-            period_threshold = period_threshold[:17]
-
-        for [sessId, itemId, time] in removed_data:
-            # find period of each action
-            if args.dataset == 'yoochoose-clicks.dat' and time > period_threshold[-1]:
-                continue
-            period = period_threshold.searchsorted(time) + 1
-            # generate time period for dictionary keys
-            if period not in time_fraction:
-                time_fraction[period] = []
-            # partition data according to period
-            time_fraction[period].append([sessId, itemId, time])
-    else:
-        # if not partition, put all actions in the last period
-        time_fraction = removed_data
-
-    return time_fraction
-
-
-def generating_txt(time_fraction, sess_end, args):
-    """
-    Generate final txt file
-    :param time_fraction: input data, a dictionary, the keys are different time periods,
-                          value is a list of actions in that time period
-    :param sess_end: session end time map, sess_map[sessId]=end_time
-    :param : args: args.test_fraction: if not split, time interval for test partition
-    """
-
-    if args.is_time_fraction:
-        # item map second time
-        item_map = {}
-        for period in sorted(time_fraction.keys()):
-            time_fraction[period].sort(key=lambda x: sess_end[x[0]])
-        for period in sorted(time_fraction.keys()):
-            for i, [userId, itemId, time] in enumerate(time_fraction[period]):
-                itemId = generate_name_Id_map(itemId, item_map)
-                time_fraction[period][i] = [userId, itemId, time]
-
-        # sort action according to time sequence
-        for period in sorted(time_fraction.keys()):
-            time_fraction[period].sort(key=lambda x: x[2])
-
-        # generate text file
-        for i, period in enumerate(sorted(time_fraction.keys())):
-            with open('period_' + str(i) + '.txt', 'w') as file_train:
-                for [userId, itemId, time] in time_fraction[period]:
-                    file_train.write('%d %d\n' % (userId, itemId))
-    else:
-        # item map second time
-        item_map = {}
-        time_fraction.sort(key=lambda x: x[2])
-        for i, [userId, itemId, time] in enumerate(time_fraction):
-            itemId = generate_name_Id_map(itemId, item_map)
-            time_fraction[i] = [userId, itemId, time]
-
-        # sort action according to time sequence
-        time_fraction.sort(key=lambda x: x[2])
-
-        max_time = max(map(lambda x: x[2], time_fraction))
-        if args.test_fraction == 'day':
-            test_threshold = 86400
-        elif args.test_fraction == 'week':
-            test_threshold = 86400 * 7
-
-        # generate text file
-        item_set = set()
-        with open('test.txt', 'w') as file_test, open('train.txt', 'w') as file_train:
-            for [userId, itemId, time] in time_fraction:
-                if sess_end[userId] < max_time - test_threshold:
-                    file_train.write('%d %d\n' % (userId, itemId))
-                    item_set.add(itemId)
-                else:
-                    file_test.write('%d %d\n' % (userId, itemId))
-
-
-if __name__ == '__main__':
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset', default='train-item-views.csv', type=str)  # or 'yoochoose-clicks.dat'
-    parser.add_argument('--is_time_fraction', default=True, type=str2bool)  # split into different time fraction or not
-    parser.add_argument('--test_fraction', default='week', type=str)  # 'day' or 'week'
-    parser.add_argument('--threshold_sess', default=1, type=int)  # minimum number of appearance time of item -1
-    parser.add_argument('--threshold_item', default=4, type=int)  # minimum length of session -1
-    parser.add_argument('--yoochoose_select', default=1.0, type=float)  # select most recent portion in yoochoose
-    args = parser.parse_args()
-    print('Start preprocess ' + args.dataset + ':')
-
-    # for reproducibility
-    SEED = 666
-    np.random.seed(SEED)
-
-    # load data and get the session and item lookup table
-    os.chdir('dataset')
-    sess_map, item_map, reformed_data = read_data(args.dataset)
-
-    # create dictionary for processed data
-    if args.dataset.split('.')[0] == 'yoochoose-clicks':
-        dataset_name = 'YOOCHOOSE'
-    elif args.dataset.split('.')[0] == 'train-item-views':
-        dataset_name = 'DIGINETICA'
-    if args.is_time_fraction:
-        dataset_name = dataset_name
-    else:
-        dataset_name = dataset_name + '_joint'
-    if not os.path.isdir(os.path.join('..', dataset_name)):
-        os.makedirs(os.path.join('..', dataset_name))
-    os.chdir(os.path.join('..', dataset_name))
-
-    # remove data according to occurrences time
-    removed_data, sess_end = short_remove(reformed_data, args)
-
-    # partition data according to time periods
-    time_fraction = time_partition(removed_data, sess_end, args)
-
-    # generate final txt file
-    generating_txt(time_fraction, sess_end, args)
-
-    print(args.dataset + ' finish!')
